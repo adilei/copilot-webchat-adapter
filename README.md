@@ -32,7 +32,7 @@ The adapter exposes `connectionStatus$`, `activity$`, `postActivity()`, and `end
 ## Installation
 
 ```bash
-npm install copilot-webchat-adapter @microsoft/agents-copilotstudio-client rxjs
+npm install copilot-webchat-adapter @microsoft/agents-copilotstudio-client
 ```
 
 ## Usage
