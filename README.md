@@ -118,38 +118,6 @@ The SDK's browser ESM build exposes two levels of API:
 
 > **Note:** The streaming generators exist in the published v1.2.3 browser ESM build but are not declared in the TypeScript `.d.ts` files. The local Agents-for-js source tree has a different (older) implementation without streaming generators.
 
-## Architecture
-
-### What the adapter is
-
-- A thin translation layer (~120 LOC) between CopilotStudioClient's streaming API and WebChat's Observable-based DirectLine protocol
-- Stateful: tracks `conversationId`, `sequence` counter, `ended` flag, and the single `activitySubscriber`
-- No external dependencies beyond `rxjs`, `uuid`, and the SDK itself
-
-### Comparison with the official (unreleased) adapter
-
-| Feature | This adapter | `CopilotStudioWebChat.createConnection()` |
-|---------|-------------|-------------------------------------------|
-| Available on npm | Yes (or can be) | No -- unreleased source only |
-| Conversation resume | Yes | No |
-| Real-time streaming | Yes (`sendActivityStreaming`) | No (uses buffered `sendActivity`) |
-| Sends full Activity objects | Yes | Yes |
-| `ended` guard | Yes | No |
-| Code size | ~120 LOC | ~150 LOC (+ ~180 LOC comments/docs) |
-
-### Current limitations
-
-| Limitation | Details |
-|------------|---------|
-| **Single subscriber** | One `activity$` subscriber at a time. Could use a `Subject` if multiple subscribers are needed. |
-| **No reconnection** | If a request fails, the connection errors out. Retry logic can be added at the application level. |
-| **Streaming generators not typed** | `sendActivityStreaming` and `startConversationStreaming` exist in the browser ESM build but are not in the published `.d.ts` declarations. |
-
-### Server-side considerations
-
-- Conversation resume routes the request to the right server-side conversation via the URL path, but Copilot Studio sessions expire after inactivity. There is no explicit error for an expired session -- the agent simply responds without prior context.
-- Each `postActivity` call is a separate HTTP request to the SSE endpoint. There is no persistent WebSocket connection.
-
 ## Test page
 
 The `test-page/` directory contains a standalone browser test harness:
@@ -205,6 +173,3 @@ npm install    # Install dependencies
 npm run build  # Build TypeScript to dist/
 ```
 
-## Known issues
-
-- The TypeScript `src/createConnection.ts` uses the buffered `startConversationAsync`/`askQuestionAsync` methods. The browser `test-page/createConnection.js` uses the streaming generators. The TypeScript version should be updated to use streaming once the generators are available in the `.d.ts` declarations.
