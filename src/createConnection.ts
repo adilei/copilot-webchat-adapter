@@ -53,37 +53,46 @@ export function createConnection(
   // Track the active conversationId (set from options or from startConversation response)
   let activeConversationId: string | undefined = conversationId
   let ended = false
+  let started = false
 
   const connectionStatus$ = new BehaviorSubject(0)
 
   const activity$ = new Observable<Partial<Activity>>((subscriber) => {
     activitySubscriber = subscriber
 
-    // Mark as connected when WebChat subscribes
+    // Mark as connected when WebChat subscribes (matches SDK behavior)
     if (connectionStatus$.value < 2) {
       connectionStatus$.next(2)
     }
 
-    if (!shouldStart) {
-      // Resuming without start call - ready immediately
+    // Guard against duplicate startConversation calls on re-subscription
+    if (!shouldStart || started) {
       return
     }
+    started = true
 
     // Start a new conversation (or re-greet an existing one)
     ;(async () => {
       try {
+        sequence = 0
         emitTyping()
         const greeting = await client.startConversationAsync()
         // Capture conversationId from the server response (if not already set)
         if (!activeConversationId && greeting.conversation?.id) {
           activeConversationId = greeting.conversation.id
         }
-        sequence = 0
         emitActivity(greeting)
       } catch (error) {
         subscriber.error(error)
       }
     })()
+
+    // Cleanup on unsubscribe
+    return () => {
+      if (activitySubscriber === subscriber) {
+        activitySubscriber = undefined
+      }
+    }
   })
 
   function emitActivity(activity: Partial<Activity>): void {
@@ -113,6 +122,9 @@ export function createConnection(
     postActivity(activity: Activity): Observable<string> {
       if (!activity) {
         throw new Error('Activity cannot be null.')
+      }
+      if (ended) {
+        throw new Error('Connection has been ended.')
       }
       if (!activitySubscriber) {
         throw new Error('Activity subscriber is not initialized.')
