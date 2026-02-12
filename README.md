@@ -115,40 +115,72 @@ The SDK's browser ESM build exposes two levels of API:
 
 ## Test page
 
-The `test-page/` directory contains a standalone browser test harness:
+The `test-page/` directory contains a standalone browser test harness with no build step required.
 
-```
-test-page/
-  index.html           # UI shell (WebChat CDN, MSAL CDN, importmap)
-  app.js               # Entry point, Connect flow
-  agents.sample.js     # Template for agent configs (copy to agents.js)
-  acquireToken.js      # MSAL popup auth
-  createConnection.js  # Browser ES module version of the adapter
-```
+### Prerequisites
 
-### Setup
+1. A published agent in [Copilot Studio](https://copilotstudio.microsoft.com)
+2. An Entra ID app registration (public client / SPA)
+
+### Create an app registration in Entra ID
+
+1. Open [Azure Portal](https://portal.azure.com) and navigate to **Entra ID**
+2. Create a new **App Registration**:
+   - Name: anything you like
+   - Supported account types: "Accounts in this organization directory only"
+   - Platform: **Single-page application (SPA)**
+   - Redirect URI: `http://localhost:5500` (match your local server port)
+3. Note the **Application (client) ID** and **Directory (tenant) ID**
+4. Go to **API Permissions** > **Add a permission**:
+   - Tab: "APIs my organization uses"
+   - Search for **Power Platform API**
+   - Delegated permissions > **CopilotStudio** > check **CopilotStudio.Copilots.Invoke**
+   - Click "Add Permissions"
+5. (Optional) Click "Grant admin consent"
+
+> **Tip:** If "Power Platform API" doesn't appear, follow [Step 2 in the Power Platform API docs](https://learn.microsoft.com/power-platform/admin/programmability-authentication-v2#step-2-configure-api-permissions) to add it to your tenant.
+
+### Get your agent's metadata
+
+1. In [Copilot Studio](https://copilotstudio.microsoft.com), open your agent
+2. Go to **Settings** > **Advanced** > **Metadata** and note:
+   - **Schema name** (this is the `agentIdentifier`)
+   - **Environment ID**
+
+### Configure and run
 
 ```bash
 cd test-page
 cp agents.sample.js agents.js
-# Edit agents.js with your Copilot Studio agent configs
-npx serve .
 ```
 
-### Features
-- Agent dropdown populated from `agents.js`
-- Optional conversation ID input for resume testing (disables start conversation when set)
-- Start conversation toggle (controls whether greeting is triggered)
-- Status bar with copyable conversation ID
-- Real-time streaming responses
-- No build step -- pure ES modules via importmap
+Edit `agents.js` with your values:
+
+```js
+export const agents = {
+  'my-agent': {
+    name: 'My Agent',
+    environmentId: '<environment-id>',
+    agentIdentifier: '<schema-name>',
+    tenantId: '<directory-tenant-id>',
+    appClientId: '<application-client-id>',
+  },
+}
+export const defaultAgent = 'my-agent'
+```
+
+Then serve:
+
+```bash
+npx serve . -l 5500
+```
 
 ### Test flow
-1. Select an agent, click Connect
-2. MSAL popup authenticates, WebChat renders
-3. Send messages, observe streaming responses
-4. Copy the conversation ID from the status bar
-5. Reload, paste the conversation ID, Connect again to test resume
+
+1. Open `http://localhost:5500`, select an agent, click **Connect**
+2. MSAL popup authenticates, WebChat renders with streaming responses
+3. Copy the conversation ID from the status bar
+4. Reload, paste the conversation ID, click Connect to test resume
 
 ## Project structure
 
