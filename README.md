@@ -1,5 +1,7 @@
 # copilot-webchat-adapter
 
+> **Experimental** -- This is an unofficial, community-driven adapter for learning and prototyping purposes. It is not supported by Microsoft and is not intended for production use. Use at your own risk.
+
 A custom DirectLine-compatible adapter that connects [Copilot Studio](https://copilotstudio.microsoft.com) agents to [BotFramework WebChat](https://github.com/microsoft/BotFramework-WebChat) using the published `@microsoft/agents-copilotstudio-client` SDK.
 
 ## Why this exists
