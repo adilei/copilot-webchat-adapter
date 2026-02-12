@@ -1,0 +1,37 @@
+{
+  "name": "copilot-webchat-adapter",
+  "version": "0.1.0",
+  "description": "Custom WebChat adapter for CopilotStudioClient with conversation resume support",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@microsoft/agents-copilotstudio-client": "^0.1.0",
+    "@microsoft/agents-activity": "^0.1.0",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@microsoft/agents-copilotstudio-client": "^0.1.0",
+    "@microsoft/agents-activity": "^0.1.0",
+    "rxjs": "7.8.2",
+    "typescript": "^5.3.0",
+    "uuid": "^11.1.0",
+    "@types/uuid": "^10.0.0"
+  },
+  "dependencies": {
+    "uuid": "^11.1.0"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src",
+    "package.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
