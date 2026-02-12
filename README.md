@@ -6,12 +6,12 @@ A custom DirectLine-compatible adapter that connects [Copilot Studio](https://co
 
 ## Why this exists
 
-The official M365 Agents SDK includes a `CopilotStudioWebChat.createConnection()` helper, but it is **not published to npm** -- it only exists in the unreleased source tree. This adapter fills the gap by implementing the same DirectLine protocol surface using the SDK's API:
+The official `CopilotStudioWebChat.createConnection()` in the M365 Agents SDK does not support:
 
-- `startConversationStreaming()` -- async generator that yields greeting activities as SSE chunks arrive
-- `sendActivityStreaming(activity, conversationId)` -- async generator that yields response activities in real-time
+- **Conversation resume** -- passing a `conversationId` to rehydrate an existing conversation
+- **Controlling the start conversation event** -- choosing whether or not to call `startConversation` (e.g., skipping it when resuming)
 
-Additionally, this adapter supports **passing a `conversationId`** to resume an existing conversation, which the official helper does not expose.
+This adapter fills those gaps while implementing the same DirectLine protocol surface, using the SDK's streaming async generators for real-time activity delivery.
 
 ## How it works
 
