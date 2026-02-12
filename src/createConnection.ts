@@ -76,12 +76,14 @@ export function createConnection(
       try {
         sequence = 0
         emitTyping()
-        const greeting = await client.startConversationAsync()
-        // Capture conversationId from the server response (if not already set)
-        if (!activeConversationId && greeting.conversation?.id) {
-          activeConversationId = greeting.conversation.id
+        const greetings = await client.startConversationAsync()
+        const activities = Array.isArray(greetings) ? greetings : [greetings]
+        for (const activity of activities) {
+          if (!activeConversationId && activity.conversation?.id) {
+            activeConversationId = activity.conversation.id
+          }
+          emitActivity(activity)
         }
-        emitActivity(greeting)
       } catch (error) {
         subscriber.error(error)
       }
