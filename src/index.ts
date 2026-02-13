@@ -1,2 +1,2 @@
-export { createConnection } from './createConnection'
-export type { WebChatConnection, CreateConnectionOptions } from './types'
+export { createConnection } from './createConnection.js'
+export type { WebChatConnection, CreateConnectionOptions } from './types.js'

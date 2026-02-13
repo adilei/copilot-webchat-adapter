@@ -5,7 +5,7 @@
 
 import { CopilotStudioClient, ConnectionSettings } from '@microsoft/agents-copilotstudio-client'
 import { acquireToken } from './acquireToken.js'
-import { createConnection } from './createConnection.js'
+import { createConnection } from 'copilot-webchat-adapter'
 import { agents, defaultAgent } from './agents.js'
 
 // DOM elements

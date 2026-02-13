@@ -1,19 +1,25 @@
-import { v4 as uuid } from 'uuid'
 import { Activity } from '@microsoft/agents-activity'
 import { Observable, BehaviorSubject, Subscriber } from 'rxjs'
 import { CopilotStudioClient } from '@microsoft/agents-copilotstudio-client'
-import { CreateConnectionOptions, WebChatConnection } from './types'
+import { CreateConnectionOptions, WebChatConnection } from './types.js'
+
+// The streaming generators exist in the published browser ESM build (v1.2.3+)
+// but are not declared in the .d.ts files. Cast to access them.
+interface StreamingClient {
+  startConversationStreaming(): AsyncIterable<Partial<Activity>>
+  sendActivityStreaming(activity: Partial<Activity>, conversationId?: string): AsyncIterable<Partial<Activity>>
+}
 
 /**
  * Creates a DirectLine-compatible connection for integrating CopilotStudioClient with WebChat.
  *
- * Unlike `CopilotStudioWebChat.createConnection()` (unreleased), this adapter supports:
- * - Passing a `conversationId` to resume an existing conversation
- * - Configuring whether `startConversationAsync()` is called on initialization
+ * Uses the SDK's streaming async generators for real-time activity delivery:
+ * - `startConversationStreaming()` to stream greeting activities
+ * - `sendActivityStreaming(activity, conversationId)` to stream response activities
  *
- * Uses only CopilotStudioClient's published public API:
- * - `startConversationAsync()` to begin a new conversation
- * - `askQuestionAsync(text, conversationId)` to send messages with explicit conversationId
+ * Extends the official CopilotStudioWebChat.createConnection() pattern with:
+ * - `conversationId` to resume an existing conversation
+ * - `startConversation` to control whether the greeting is triggered
  *
  * @example New conversation (default behavior)
  * ```ts
@@ -27,14 +33,6 @@ import { CreateConnectionOptions, WebChatConnection } from './types'
  *   showTyping: true,
  * })
  * ```
- *
- * @example Resume but also call startConversation (get greeting)
- * ```ts
- * const directLine = createConnection(client, {
- *   conversationId: savedConversationId,
- *   startConversation: true,
- * })
- * ```
  */
 export function createConnection(
   client: CopilotStudioClient,
@@ -45,12 +43,11 @@ export function createConnection(
     showTyping = false,
   } = options
 
-  // Default: start conversation if no conversationId; skip if resuming
   const shouldStart = options.startConversation ?? !conversationId
+  const streaming = client as unknown as StreamingClient
 
   let sequence = 0
   let activitySubscriber: Subscriber<Partial<Activity>> | undefined
-  // Track the active conversationId (set from options or from startConversation response)
   let activeConversationId: string | undefined = conversationId
   let ended = false
   let started = false
@@ -60,25 +57,20 @@ export function createConnection(
   const activity$ = new Observable<Partial<Activity>>((subscriber) => {
     activitySubscriber = subscriber
 
-    // Mark as connected when WebChat subscribes (matches SDK behavior)
     if (connectionStatus$.value < 2) {
       connectionStatus$.next(2)
     }
 
-    // Guard against duplicate startConversation calls on re-subscription
     if (!shouldStart || started) {
       return
     }
     started = true
 
-    // Start a new conversation (or re-greet an existing one)
     ;(async () => {
       try {
         sequence = 0
         emitTyping()
-        const greetings = await client.startConversationAsync()
-        const activities = Array.isArray(greetings) ? greetings : [greetings]
-        for (const activity of activities) {
+        for await (const activity of streaming.startConversationStreaming()) {
           if (!activeConversationId && activity.conversation?.id) {
             activeConversationId = activity.conversation.id
           }
@@ -89,7 +81,6 @@ export function createConnection(
       }
     })()
 
-    // Cleanup on unsubscribe
     return () => {
       if (activitySubscriber === subscriber) {
         activitySubscriber = undefined
@@ -98,7 +89,8 @@ export function createConnection(
   })
 
   function emitActivity(activity: Partial<Activity>): void {
-    if (ended || !activitySubscriber) return
+    if (ended || !activitySubscriber || !activity) return
+    if (!activity.type) return
     activitySubscriber.next({
       ...activity,
       timestamp: new Date().toISOString(),
@@ -122,34 +114,23 @@ export function createConnection(
     activity$,
 
     postActivity(activity: Activity): Observable<string> {
-      if (!activity) {
-        throw new Error('Activity cannot be null.')
-      }
-      if (ended) {
-        throw new Error('Connection has been ended.')
-      }
-      if (!activitySubscriber) {
-        throw new Error('Activity subscriber is not initialized.')
-      }
+      if (!activity) throw new Error('Activity cannot be null.')
+      if (ended) throw new Error('Connection has been ended.')
+      if (!activitySubscriber) throw new Error('Activity subscriber is not initialized.')
 
       return new Observable<string>((subscriber) => {
         ;(async () => {
           try {
-            const id = uuid()
+            const id = crypto.randomUUID()
 
-            // Echo the user's activity back to the transcript
             emitActivity({ ...activity, id })
             emitTyping()
 
-            // Send to Copilot Studio using askQuestionAsync with explicit conversationId
-            const text = activity.text || ''
-            const responses = await client.askQuestionAsync(
-              text,
-              activeConversationId
-            )
-
-            // Capture conversationId from response if we don't have one yet
-            for (const response of responses) {
+            const outgoing = {
+              ...activity,
+              conversation: { id: activeConversationId || '' },
+            }
+            for await (const response of streaming.sendActivityStreaming(outgoing, activeConversationId)) {
               if (!activeConversationId && response.conversation?.id) {
                 activeConversationId = response.conversation.id
               }

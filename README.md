@@ -150,11 +150,12 @@ The `test-page/` directory contains a standalone browser test harness with no bu
 ### Configure and run
 
 ```bash
-cd test-page
-cp agents.sample.js agents.js
+npm install
+npm run build
+cp test-page/agents.sample.js test-page/agents.js
 ```
 
-Edit `agents.js` with your values:
+Edit `test-page/agents.js` with your values:
 
 ```js
 export const agents = {
@@ -169,7 +170,7 @@ export const agents = {
 export const defaultAgent = 'my-agent'
 ```
 
-Then serve:
+Then serve from the project root (the test page imports the built adapter from `dist/`):
 
 ```bash
 npx serve . -l 5500
@@ -177,7 +178,7 @@ npx serve . -l 5500
 
 ### Test flow
 
-1. Open `http://localhost:5500`, select an agent, click **Connect**
+1. Open `http://localhost:5500/test-page/`, select an agent, click **Connect**
 2. MSAL popup authenticates, WebChat renders with streaming responses
 3. Copy the conversation ID from the status bar
 4. Reload, paste the conversation ID, click Connect to test resume
