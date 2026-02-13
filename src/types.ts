@@ -8,6 +8,7 @@ import { BehaviorSubject, Observable } from 'rxjs'
 export interface WebChatConnection {
   connectionStatus$: BehaviorSubject<number>
   activity$: Observable<Partial<Activity>>
+  readonly conversationId: string | undefined
   postActivity(activity: Activity): Observable<string>
   end(): void
 }

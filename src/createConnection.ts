@@ -113,6 +113,10 @@ export function createConnection(
     connectionStatus$,
     activity$,
 
+    get conversationId() {
+      return activeConversationId
+    },
+
     postActivity(activity: Activity): Observable<string> {
       if (!activity) throw new Error('Activity cannot be null.')
       if (ended) throw new Error('Connection has been ended.')
