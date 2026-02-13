@@ -1,4 +1,4 @@
-import { Activity } from '@microsoft/agents-activity'
+import { Activity, Attachment } from '@microsoft/agents-activity'
 import { Observable, BehaviorSubject, Subscriber } from 'rxjs'
 import { CopilotStudioClient } from '@microsoft/agents-copilotstudio-client'
 import { CreateConnectionOptions, WebChatConnection } from './types.js'
@@ -74,6 +74,8 @@ export function createConnection(
           if (!activeConversationId && activity.conversation?.id) {
             activeConversationId = activity.conversation.id
           }
+          // Strip replyToId to avoid WebChat "timed out waiting for activity" warnings
+          delete activity.replyToId
           emitActivity(activity)
         }
       } catch (error) {
@@ -127,13 +129,20 @@ export function createConnection(
           try {
             const id = crypto.randomUUID()
 
-            emitActivity({ ...activity, id })
-            emitTyping()
-
             const outgoing = {
               ...activity,
+              id,
               conversation: { id: activeConversationId || '' },
+              attachments: await processAttachments(activity),
             }
+
+            emitActivity(outgoing)
+            emitTyping()
+
+            // Notify WebChat immediately that the message was sent
+            subscriber.next(id)
+
+            // Stream the agent's response
             for await (const response of streaming.sendActivityStreaming(outgoing, activeConversationId)) {
               if (!activeConversationId && response.conversation?.id) {
                 activeConversationId = response.conversation.id
@@ -141,7 +150,6 @@ export function createConnection(
               emitActivity(response)
             }
 
-            subscriber.next(id)
             subscriber.complete()
           } catch (error) {
             subscriber.error(error)
@@ -159,4 +167,56 @@ export function createConnection(
       }
     },
   }
+}
+
+/**
+ * Processes activity attachments, converting blob URLs to data URLs.
+ */
+async function processAttachments(activity: Activity): Promise<Attachment[]> {
+  if (activity.type !== 'message' || !activity.attachments?.length) {
+    return activity.attachments || []
+  }
+
+  const attachments: Attachment[] = []
+  for (const attachment of activity.attachments) {
+    attachments.push(await processBlobAttachment(attachment))
+  }
+  return attachments
+}
+
+/**
+ * Converts a blob: content URL to a data: URL so it can be sent to the server.
+ */
+async function processBlobAttachment(attachment: Attachment): Promise<Attachment> {
+  if (!attachment.contentUrl?.startsWith('blob:')) {
+    return attachment
+  }
+
+  try {
+    const response = await fetch(attachment.contentUrl)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch blob URL: ${response.status} ${response.statusText}`)
+    }
+    const blob = await response.blob()
+    const arrayBuffer = await blob.arrayBuffer()
+    const base64 = arrayBufferToBase64(arrayBuffer)
+    return { ...attachment, contentUrl: `data:${blob.type};base64,${base64}` }
+  } catch {
+    return attachment
+  }
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  // Node.js
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const B = (globalThis as any).Buffer
+  if (typeof B === 'function') {
+    return B.from(buffer).toString('base64')
+  }
+  // Browser
+  let binary = ''
+  for (const byte of new Uint8Array(buffer)) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
 }
