@@ -38,19 +38,21 @@ export function createConnection(
   client: CopilotStudioClient,
   options: CreateConnectionOptions = {}
 ): WebChatConnection {
-  const {
-    conversationId,
-    showTyping = false,
-  } = options
+  const { showTyping = false } = options
 
-  const shouldStart = options.startConversation ?? !conversationId
+  const normalizedConversationId =
+    options.conversationId && options.conversationId.trim() !== ''
+      ? options.conversationId.trim()
+      : undefined
+  const shouldStart = options.startConversation ?? !normalizedConversationId
   const streaming = client as unknown as StreamingClient
 
   let sequence = 0
   let activitySubscriber: Subscriber<Partial<Activity>> | undefined
-  let activeConversationId: string | undefined = conversationId
+  let activeConversationId: string | undefined = normalizedConversationId
   let ended = false
   let started = false
+
 
   const connectionStatus$ = new BehaviorSubject(0)
 
@@ -71,7 +73,7 @@ export function createConnection(
         sequence = 0
         emitTyping()
         for await (const activity of streaming.startConversationStreaming()) {
-          if (!activeConversationId && activity.conversation?.id) {
+          if (activity.conversation?.id) {
             activeConversationId = activity.conversation.id
           }
           // Strip replyToId to avoid WebChat "timed out waiting for activity" warnings
