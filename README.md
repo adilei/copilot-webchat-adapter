@@ -10,6 +10,7 @@ The official `CopilotStudioWebChat.createConnection()` in the M365 Agents SDK do
 
 - **Conversation resume** -- passing a `conversationId` to rehydrate an existing conversation
 - **Controlling the start conversation event** -- choosing whether or not to call `startConversation` (e.g., skipping it when resuming)
+- **Activity history** -- the underlying API has no way to fetch past activities or list previous conversations
 
 This adapter fills those gaps while implementing the same DirectLine protocol surface, using the SDK's streaming async generators for real-time activity delivery.
 
@@ -75,6 +76,45 @@ WebChat.renderWebChat({ directLine }, document.getElementById('webchat'))
 | `showTyping` | `boolean` | `false` | Emit a synthetic typing indicator before each request |
 | `getHistoryFromExternalStorage` | `(id: string) => Promise<Activity[]>` | `undefined` | Optional callback to fetch stored activities on resume |
 
+### Conversation history
+
+The adapter can replay stored activities on resume via the `getHistoryFromExternalStorage` callback. The adapter is agnostic about storage -- it only needs a function that returns activities for a given conversation ID. You can use localStorage, IndexedDB, a server-side API, or anything else.
+
+**Saving activities** -- Use a WebChat Redux middleware to intercept incoming activities and save them to your store:
+
+```javascript
+const store = WebChat.createStore({}, () => next => action => {
+  if (action.type === 'DIRECT_LINE/INCOMING_ACTIVITY') {
+    const { activity } = action.payload
+    if (activity.type === 'message' && directLine.conversationId) {
+      myStore.save(directLine.conversationId, activity)
+    }
+  }
+  return next(action)
+})
+
+WebChat.renderWebChat({ directLine, store }, document.getElementById('webchat'))
+```
+
+**Loading activities on resume** -- Pass your retrieval function when creating the connection:
+
+```typescript
+const directLine = createConnection(client, {
+  conversationId: savedConversationId,
+  getHistoryFromExternalStorage: (id) => myStore.getActivities(id),
+})
+```
+
+The adapter replays the returned activities through `activity$` before any new messages stream in, maintaining proper sequence numbering so WebChat renders everything in order.
+
+The example above only saves `message` activities. Depending on your scenario, you may want to store other activity types too (e.g., adaptive card submissions, events). Keep in mind that non-message activities may need special handling or transformation when replayed, for example, disabling adaptive cards that were already submitted.
+
+If `getHistoryFromExternalStorage` throws, the adapter continues without history (graceful degradation).
+
+> **Note:** `getHistoryFromExternalStorage` is intentionally optional. When the SDK adds native activity fetching, the adapter can call it internally by default, and this callback becomes an override.
+
+See `test-page/` for a complete working example using localStorage.
+
 ### Browser (no build step)
 
 See `test-page/` for a complete working example that runs directly in the browser using ES modules and CDN imports. No bundler required.
@@ -112,7 +152,7 @@ The SDK's browser ESM build exposes two levels of API:
 | `startConversationAsync()` | `async` | Convenience wrapper -- collects all streaming chunks into an array. |
 | `askQuestionAsync(text, convId)` | `async` | Convenience wrapper -- text-only, collects all chunks into an array. |
 
-> **Note:** The streaming generators exist in the published v1.2.3 browser ESM build but are not declared in the TypeScript `.d.ts` files. The local Agents-for-js source tree has a different (older) implementation without streaming generators.
+> **Note:** The streaming generators are also used by the [official SDK adapter](https://github.com/microsoft/Agents-for-js/blob/main/packages/agents-copilotstudio-client/src/copilotStudioWebChat.ts) and [public samples](https://github.com/microsoft/Agents/blob/main/samples/nodejs/copilotstudio-client/src/index.ts).
 
 ## Test page
 
