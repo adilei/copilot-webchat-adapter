@@ -5,7 +5,8 @@
 
 import { CopilotStudioClient, ConnectionSettings } from '@microsoft/agents-copilotstudio-client'
 import { acquireToken } from './acquireToken.js'
-import { createConnection, createLocalStorageStore } from 'copilot-webchat-adapter'
+import { createConnection } from 'copilot-webchat-adapter'
+import { createLocalStorageStore } from './activityStore.js'
 import { agents, defaultAgent } from './agents.js'
 
 // DOM elements

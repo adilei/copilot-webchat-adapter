@@ -73,6 +73,7 @@ WebChat.renderWebChat({ directLine }, document.getElementById('webchat'))
 | `conversationId` | `string` | `undefined` | Existing conversation ID to resume |
 | `startConversation` | `boolean` | `!conversationId` | Whether to call `startConversationStreaming()` on init |
 | `showTyping` | `boolean` | `false` | Emit a synthetic typing indicator before each request |
+| `getHistoryFromExternalStorage` | `(id: string) => Promise<Activity[]>` | `undefined` | Optional callback to fetch stored activities on resume |
 
 ### Browser (no build step)
 
@@ -191,6 +192,7 @@ src/
   types.ts              # WebChatConnection and CreateConnectionOptions interfaces
   index.ts              # Public exports
 test-page/              # Browser test harness (no build step)
+  activityStore.js      # Sample localStorage-backed activity store
 dist/                   # Compiled output
 ```
 

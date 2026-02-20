@@ -3,13 +3,6 @@ import { Observable, BehaviorSubject, Subscriber } from 'rxjs'
 import { CopilotStudioClient } from '@microsoft/agents-copilotstudio-client'
 import { CreateConnectionOptions, WebChatConnection } from './types.js'
 
-// The streaming generators exist in the published browser ESM build (v1.2.3+)
-// but are not declared in the .d.ts files. Cast to access them.
-interface StreamingClient {
-  startConversationStreaming(): AsyncIterable<Partial<Activity>>
-  sendActivityStreaming(activity: Partial<Activity>, conversationId?: string): AsyncIterable<Partial<Activity>>
-}
-
 /**
  * Creates a DirectLine-compatible connection for integrating CopilotStudioClient with WebChat.
  *
@@ -45,7 +38,6 @@ export function createConnection(
       ? options.conversationId.trim()
       : undefined
   const shouldStart = options.startConversation ?? !normalizedConversationId
-  const streaming = client as unknown as StreamingClient
 
   let sequence = 0
   let activitySubscriber: Subscriber<Partial<Activity>> | undefined
@@ -93,7 +85,7 @@ export function createConnection(
         started = true
         try {
           emitTyping()
-          for await (const activity of streaming.startConversationStreaming()) {
+          for await (const activity of client.startConversationStreaming()) {
             if (activity.conversation?.id) {
               activeConversationId = activity.conversation.id
             }
@@ -152,12 +144,12 @@ export function createConnection(
           try {
             const id = crypto.randomUUID()
 
-            const outgoing = {
+            const outgoing = Activity.fromObject({
               ...activity,
               id,
               conversation: { id: activeConversationId || '' },
               attachments: await processAttachments(activity),
-            }
+            })
 
             emitActivity(outgoing)
             emitTyping()
@@ -166,7 +158,7 @@ export function createConnection(
             subscriber.next(id)
 
             // Stream the agent's response
-            for await (const response of streaming.sendActivityStreaming(outgoing, activeConversationId)) {
+            for await (const response of client.sendActivityStreaming(outgoing, activeConversationId)) {
               if (!activeConversationId && response.conversation?.id) {
                 activeConversationId = response.conversation.id
               }
