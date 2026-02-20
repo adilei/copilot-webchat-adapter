@@ -39,4 +39,16 @@ export interface CreateConnectionOptions {
    * @default false
    */
   showTyping?: boolean
+
+  /**
+   * Optional function to fetch stored activities for a resumed conversation.
+   * Called on connect when a `conversationId` is provided.
+   * Returned activities are emitted through `activity$` before the live stream.
+   *
+   * Intended for use with an `ActivityStore` implementation — pass
+   * `store.getActivities` here. When the MCS SDK adds native history
+   * fetching, the adapter will call it internally by default and this
+   * becomes an optional override.
+   */
+  getHistoryFromExternalStorage?: (conversationId: string) => Promise<Partial<Activity>[]>
 }

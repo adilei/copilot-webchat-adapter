@@ -15,7 +15,7 @@
       "imports": {
         "@microsoft/agents-copilotstudio-client": "https://unpkg.com/@microsoft/agents-copilotstudio-client@1.2.3/dist/src/browser.mjs",
         "rxjs": "https://esm.sh/rxjs@7.8.2",
-        "copilot-webchat-adapter": "../dist/createConnection.js"
+        "copilot-webchat-adapter": "../dist/index.js"
       }
     }
   </script>
@@ -112,6 +112,20 @@
 
     .status-bar .copy-btn:hover { background: #e8e8e8; }
 
+    .status-bar .clear-btn {
+      background: none;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      padding: 1px 6px;
+      cursor: pointer;
+      font-size: 11px;
+      color: #555;
+      margin-left: auto;
+    }
+
+    .status-bar .clear-btn:hover { background: #e8e8e8; }
+    .status-bar .clear-btn:disabled { color: #bbb; cursor: not-allowed; }
+
     #webchat {
       flex: 1;
       overflow: hidden;
@@ -141,6 +155,7 @@
   <div class="status-bar">
     <span id="statusText">Not connected</span>
     <span id="convIdDisplay"></span>
+    <button id="clearHistoryBtn" class="clear-btn" disabled>Clear history</button>
   </div>
 
   <div id="webchat" role="main"></div>

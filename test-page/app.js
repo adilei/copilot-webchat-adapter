@@ -5,7 +5,7 @@
 
 import { CopilotStudioClient, ConnectionSettings } from '@microsoft/agents-copilotstudio-client'
 import { acquireToken } from './acquireToken.js'
-import { createConnection } from 'copilot-webchat-adapter'
+import { createConnection, createLocalStorageStore } from 'copilot-webchat-adapter'
 import { agents, defaultAgent } from './agents.js'
 
 // DOM elements
@@ -16,6 +16,10 @@ const statusText = document.getElementById('statusText')
 const convIdDisplay = document.getElementById('convIdDisplay')
 const startConvCheckbox = document.getElementById('startConvCheckbox')
 const webchatEl = document.getElementById('webchat')
+const clearHistoryBtn = document.getElementById('clearHistoryBtn')
+
+// Activity store for conversation history
+const activityStore = createLocalStorageStore()
 
 // Populate agent dropdown
 for (const [key, agent] of Object.entries(agents)) {
@@ -46,6 +50,7 @@ connectBtn.addEventListener('click', async () => {
   connectBtn.disabled = true
   statusText.textContent = 'Authenticating...'
   convIdDisplay.innerHTML = ''
+  clearHistoryBtn.disabled = true
 
   // Clean up previous connection
   if (currentConnection) {
@@ -72,11 +77,25 @@ connectBtn.addEventListener('click', async () => {
       conversationId,
       startConversation: startConvCheckbox.checked,
       showTyping: true,
+      getHistoryFromExternalStorage: conversationId
+        ? (id) => activityStore.getActivities(id)
+        : undefined,
     })
     currentConnection = directLine
 
+    // WebChat store middleware — save incoming message activities
+    const store = window.WebChat.createStore({}, () => next => action => {
+      if (action.type === 'DIRECT_LINE/INCOMING_ACTIVITY') {
+        const { activity } = action.payload
+        if (activity.type === 'message' && directLine.conversationId) {
+          activityStore.saveActivity(directLine.conversationId, activity)
+        }
+      }
+      return next(action)
+    })
+
     window.WebChat.renderWebChat(
-      { directLine },
+      { directLine, store },
       webchatEl
     )
 
@@ -99,6 +118,16 @@ connectBtn.addEventListener('click', async () => {
   }
 })
 
+// Clear history button
+clearHistoryBtn.addEventListener('click', () => {
+  const id = currentConnection?.conversationId
+  if (id) {
+    activityStore.clear(id)
+    clearHistoryBtn.textContent = 'Cleared!'
+    setTimeout(() => { clearHistoryBtn.textContent = 'Clear history' }, 1500)
+  }
+})
+
 function pollConversationId(directLine) {
   const interval = setInterval(() => {
     const id = directLine.conversationId
@@ -115,6 +144,7 @@ function pollConversationId(directLine) {
 
 function showConversationId(id) {
   convIdDisplay.innerHTML = ''
+  clearHistoryBtn.disabled = false
 
   const label = document.createElement('span')
   label.textContent = 'ConvID: '

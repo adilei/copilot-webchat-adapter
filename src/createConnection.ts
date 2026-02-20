@@ -38,7 +38,7 @@ export function createConnection(
   client: CopilotStudioClient,
   options: CreateConnectionOptions = {}
 ): WebChatConnection {
-  const { showTyping = false } = options
+  const { showTyping = false, getHistoryFromExternalStorage } = options
 
   const normalizedConversationId =
     options.conversationId && options.conversationId.trim() !== ''
@@ -63,25 +63,46 @@ export function createConnection(
       connectionStatus$.next(2)
     }
 
-    if (!shouldStart || started) {
-      return
-    }
-    started = true
-
     ;(async () => {
-      try {
-        sequence = 0
-        emitTyping()
-        for await (const activity of streaming.startConversationStreaming()) {
-          if (activity.conversation?.id) {
-            activeConversationId = activity.conversation.id
+      // Replay stored activities on resume
+      if (getHistoryFromExternalStorage && normalizedConversationId) {
+        try {
+          const stored = await getHistoryFromExternalStorage(normalizedConversationId)
+          for (const activity of stored) {
+            if (!ended && activitySubscriber) {
+              // Emit directly — stored activities are already enriched with
+              // timestamps and sequence IDs from when the consumer saved them
+              activitySubscriber.next(activity)
+            }
           }
-          // Strip replyToId to avoid WebChat "timed out waiting for activity" warnings
-          delete activity.replyToId
-          emitActivity(activity)
+          // Continue sequence numbering from where stored history left off
+          const lastSeq = stored.reduce((max, a) => {
+            const seq = (a.channelData as Record<string, unknown>)?.['webchat:sequence-id']
+            return typeof seq === 'number' && seq > max ? seq : max
+          }, -1)
+          if (lastSeq >= sequence) {
+            sequence = lastSeq + 1
+          }
+        } catch {
+          // History unavailable — continue without it
         }
-      } catch (error) {
-        subscriber.error(error)
+      }
+
+      // Stream greeting activities for new conversations
+      if (shouldStart && !started) {
+        started = true
+        try {
+          emitTyping()
+          for await (const activity of streaming.startConversationStreaming()) {
+            if (activity.conversation?.id) {
+              activeConversationId = activity.conversation.id
+            }
+            delete activity.replyToId
+            emitActivity(activity)
+          }
+        } catch (error) {
+          subscriber.error(error)
+        }
       }
     })()
 
