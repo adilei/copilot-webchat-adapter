@@ -1,7 +1,35 @@
-import { Activity, Attachment } from '@microsoft/agents-activity'
-import { Observable, BehaviorSubject, Subscriber } from 'rxjs'
+import { v4 as uuid } from 'uuid'
+
+import { Activity, Attachment, ConversationAccount } from '@microsoft/agents-activity'
+import { Observable, BehaviorSubject, type Subscriber } from 'rxjs'
 import { CopilotStudioClient } from '@microsoft/agents-copilotstudio-client'
 import { CreateConnectionOptions, WebChatConnection } from './types.js'
+
+/**
+ * Creates a wrapper that invokes `fn` at most once.
+ * On the first call the wrapper invokes `fn(value)` and returns whatever `fn` returns.
+ * Subsequent calls do nothing and return `undefined`.
+ */
+function once<T = void> (fn: (value: T) => Promise<void>): (value: T) => Promise<void> | void {
+  let called = false
+
+  return value => {
+    if (!called) {
+      called = true
+
+      return fn(value)
+    }
+  }
+}
+
+/**
+ * Creates an RxJS Observable that wraps an asynchronous function execution.
+ */
+function createObservable<T> (fn: (subscriber: Subscriber<T>) => void): Observable<T> {
+  return new Observable<T>((subscriber: Subscriber<T>) => {
+    Promise.resolve(fn(subscriber)).catch((error) => subscriber.error(error))
+  })
+}
 
 /**
  * Creates a DirectLine-compatible connection for integrating CopilotStudioClient with WebChat.
@@ -13,6 +41,7 @@ import { CreateConnectionOptions, WebChatConnection } from './types.js'
  * Extends the official CopilotStudioWebChat.createConnection() pattern with:
  * - `conversationId` to resume an existing conversation
  * - `startConversation` to control whether the greeting is triggered
+ * - `getHistoryFromExternalStorage` to replay stored activities on resume
  *
  * @example New conversation (default behavior)
  * ```ts
@@ -41,139 +70,145 @@ export function createConnection(
 
   let sequence = 0
   let activitySubscriber: Subscriber<Partial<Activity>> | undefined
+  let conversation: ConversationAccount | undefined = normalizedConversationId
+    ? ({ id: normalizedConversationId } as ConversationAccount)
+    : undefined
   let activeConversationId: string | undefined = normalizedConversationId
   let ended = false
   let started = false
 
-
   const connectionStatus$ = new BehaviorSubject(0)
-
-  const activity$ = new Observable<Partial<Activity>>((subscriber) => {
+  const activity$ = createObservable<Partial<Activity>>(async (subscriber) => {
     activitySubscriber = subscriber
 
-    if (connectionStatus$.value < 2) {
+    const handleAcknowledgementOnce = once(async (): Promise<void> => {
       connectionStatus$.next(2)
+      await Promise.resolve() // Webchat requires an extra tick to process the connection status change
+    })
+
+    // Replay stored activities on resume
+    if (getHistoryFromExternalStorage && normalizedConversationId) {
+      try {
+        const stored = await getHistoryFromExternalStorage(normalizedConversationId)
+        for (const activity of stored) {
+          if (activitySubscriber) {
+            activitySubscriber.next(activity)
+          }
+        }
+        // Continue sequence numbering from where stored history left off
+        const lastSeq = stored.reduce((max, a) => {
+          const seq = (a.channelData as Record<string, unknown>)?.['webchat:sequence-id']
+          return typeof seq === 'number' && seq > max ? seq : max
+        }, -1)
+        if (lastSeq >= sequence) {
+          sequence = lastSeq + 1
+        }
+      } catch {
+        // History unavailable — continue without it
+      }
+      await handleAcknowledgementOnce()
     }
 
-    ;(async () => {
-      // Replay stored activities on resume
-      if (getHistoryFromExternalStorage && normalizedConversationId) {
-        try {
-          const stored = await getHistoryFromExternalStorage(normalizedConversationId)
-          for (const activity of stored) {
-            if (!ended && activitySubscriber) {
-              // Emit directly — stored activities are already enriched with
-              // timestamps and sequence IDs from when the consumer saved them
-              activitySubscriber.next(activity)
-            }
-          }
-          // Continue sequence numbering from where stored history left off
-          const lastSeq = stored.reduce((max, a) => {
-            const seq = (a.channelData as Record<string, unknown>)?.['webchat:sequence-id']
-            return typeof seq === 'number' && seq > max ? seq : max
-          }, -1)
-          if (lastSeq >= sequence) {
-            sequence = lastSeq + 1
-          }
-        } catch {
-          // History unavailable — continue without it
-        }
-      }
-
-      // Stream greeting activities for new conversations
-      if (shouldStart && !started) {
-        started = true
-        try {
-          emitTyping()
-          for await (const activity of client.startConversationStreaming()) {
-            if (activity.conversation?.id) {
-              activeConversationId = activity.conversation.id
-            }
-            delete activity.replyToId
-            emitActivity(activity)
-          }
-        } catch (error) {
-          subscriber.error(error)
-        }
-      }
-    })()
-
-    return () => {
-      if (activitySubscriber === subscriber) {
-        activitySubscriber = undefined
-      }
+    // When resuming (shouldStart === false), transition straight to connected
+    if (!shouldStart || started) {
+      await handleAcknowledgementOnce()
+      return
     }
+    started = true
+
+    notifyTyping()
+
+    for await (const activity of (client as any).startConversationStreaming()) {
+      delete activity.replyToId
+      if (!conversation && activity.conversation) {
+        conversation = activity.conversation
+      }
+      if (activity.conversation?.id) {
+        activeConversationId = activity.conversation.id
+      }
+      await handleAcknowledgementOnce()
+      notifyActivity(activity)
+    }
+    // If no activities received from bot, we should still acknowledge.
+    await handleAcknowledgementOnce()
   })
 
-  function emitActivity(activity: Partial<Activity>): void {
-    if (ended || !activitySubscriber || !activity) return
-    if (!activity.type) return
-    activitySubscriber.next({
+  const notifyActivity = (activity: Partial<Activity>) => {
+    const newActivity = {
       ...activity,
       timestamp: new Date().toISOString(),
       channelData: {
         ...activity.channelData,
-        'webchat:sequence-id': sequence++,
+        'webchat:sequence-id': sequence,
       },
-    })
+    }
+    sequence++
+    activitySubscriber?.next(newActivity)
   }
 
-  function emitTyping(): void {
-    if (!showTyping) return
-    const from = activeConversationId
-      ? { id: activeConversationId, name: 'Agent' }
+  const notifyTyping = () => {
+    if (!showTyping) {
+      return
+    }
+
+    const from = conversation
+      ? { id: conversation.id, name: conversation.name }
       : { id: 'agent', name: 'Agent' }
-    emitActivity({ type: 'typing', from })
+    notifyActivity({ type: 'typing', from })
   }
 
   return {
     connectionStatus$,
     activity$,
 
-    get conversationId() {
+    get conversationId () {
       return activeConversationId
     },
 
-    postActivity(activity: Activity): Observable<string> {
-      if (!activity) throw new Error('Activity cannot be null.')
-      if (ended) throw new Error('Connection has been ended.')
-      if (!activitySubscriber) throw new Error('Activity subscriber is not initialized.')
+    postActivity (activity: Activity) {
+      if (!activity) {
+        throw new Error('Activity cannot be null.')
+      }
 
-      return new Observable<string>((subscriber) => {
-        ;(async () => {
-          try {
-            const id = crypto.randomUUID()
+      if (ended) {
+        throw new Error('Connection has been ended.')
+      }
 
-            const outgoing = Activity.fromObject({
-              ...activity,
-              id,
-              conversation: { id: activeConversationId || '' },
-              attachments: await processAttachments(activity),
-            })
+      if (!activitySubscriber) {
+        throw new Error('Activity subscriber is not initialized.')
+      }
 
-            emitActivity(outgoing)
-            emitTyping()
+      return createObservable<string>(async (subscriber) => {
+        try {
+          const newActivity = Activity.fromObject({
+            ...activity,
+            id: uuid(),
+            attachments: await processAttachments(activity)
+          })
 
-            // Notify WebChat immediately that the message was sent
-            subscriber.next(id)
+          notifyActivity(newActivity)
+          notifyTyping()
 
-            // Stream the agent's response
-            for await (const response of client.sendActivityStreaming(outgoing, activeConversationId)) {
-              if (!activeConversationId && response.conversation?.id) {
-                activeConversationId = response.conversation.id
-              }
-              emitActivity(response)
+          // Notify WebChat immediately that the message was sent
+          subscriber.next(newActivity.id!)
+
+          // Stream the agent's response, passing activeConversationId for URL routing
+          for await (const responseActivity of (client as any).sendActivityStreaming(newActivity, activeConversationId)) {
+            if (!activeConversationId && responseActivity.conversation?.id) {
+              activeConversationId = responseActivity.conversation.id
             }
-
-            subscriber.complete()
-          } catch (error) {
-            subscriber.error(error)
+            notifyActivity(responseActivity)
           }
-        })()
+
+          subscriber.complete()
+        } catch (error) {
+          console.warn('Error sending Activity to Copilot Studio:', error)
+          subscriber.error(error)
+        }
       })
     },
 
-    end(): void {
+    end () {
       ended = true
       connectionStatus$.complete()
       if (activitySubscriber) {
@@ -185,50 +220,61 @@ export function createConnection(
 }
 
 /**
- * Processes activity attachments, converting blob URLs to data URLs.
+ * Processes activity attachments.
  */
-async function processAttachments(activity: Activity): Promise<Attachment[]> {
+async function processAttachments (activity: Activity): Promise<Attachment[]> {
   if (activity.type !== 'message' || !activity.attachments?.length) {
     return activity.attachments || []
   }
 
   const attachments: Attachment[] = []
   for (const attachment of activity.attachments) {
-    attachments.push(await processBlobAttachment(attachment))
+    const processed = await processBlobAttachment(attachment)
+    attachments.push(processed)
   }
+
   return attachments
 }
 
 /**
  * Converts a blob: content URL to a data: URL so it can be sent to the server.
  */
-async function processBlobAttachment(attachment: Attachment): Promise<Attachment> {
-  if (!attachment.contentUrl?.startsWith('blob:')) {
+async function processBlobAttachment (attachment: Attachment): Promise<Attachment> {
+  let newContentUrl = attachment.contentUrl
+  if (!newContentUrl?.startsWith('blob:')) {
     return attachment
   }
 
   try {
-    const response = await fetch(attachment.contentUrl)
+    const response = await fetch(newContentUrl)
     if (!response.ok) {
       throw new Error(`Failed to fetch blob URL: ${response.status} ${response.statusText}`)
     }
+
     const blob = await response.blob()
     const arrayBuffer = await blob.arrayBuffer()
     const base64 = arrayBufferToBase64(arrayBuffer)
-    return { ...attachment, contentUrl: `data:${blob.type};base64,${base64}` }
-  } catch {
-    return attachment
+    newContentUrl = `data:${blob.type};base64,${base64}`
+  } catch (error) {
+    newContentUrl = attachment.contentUrl
+    console.warn('Error processing blob attachment:', newContentUrl, error)
   }
+
+  return { ...attachment, contentUrl: newContentUrl }
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  // Node.js
+/**
+ * Converts an ArrayBuffer to a base64 string.
+ */
+function arrayBufferToBase64 (buffer: ArrayBuffer): string {
+  // Node.js environment
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const B = (globalThis as any).Buffer
-  if (typeof B === 'function') {
-    return B.from(buffer).toString('base64')
+  const BufferClass = typeof (globalThis as any).Buffer === 'function' ? (globalThis as any).Buffer : undefined
+  if (BufferClass && typeof BufferClass.from === 'function') {
+    return BufferClass.from(buffer).toString('base64')
   }
-  // Browser
+
+  // Browser environment
   let binary = ''
   for (const byte of new Uint8Array(buffer)) {
     binary += String.fromCharCode(byte)
